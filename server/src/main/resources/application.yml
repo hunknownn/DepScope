@@ -1,0 +1,16 @@
+server:
+  port: 8080
+
+# 분석 대상 설정. 둘 중 아무것도 안 주면 빈 인덱스로 시작 → 나중에 POST /api/reindex 로 지정 가능.
+analyzer:
+  # 멀티모듈 프로젝트라면 루트만 주면 된다. 하위의 build/classes/{java,kotlin}/main 자동 탐색.
+  # 예: /Users/me/workspace/url-jarvis
+  project-root: ""
+
+  # 직접 ":" 구분 디렉터리/jar 경로 지정 (project-root 와 합집합으로 사용됨).
+  # 예: /path/build/classes/kotlin/main:/path/libs/foo.jar
+  classpath: ""
+
+  # "," 구분 패키지 prefix 화이트리스트. 비우면 전체. JDK/외부 라이브러리 노이즈 제거에 권장.
+  # 예: io.hunknownn.urljarvis,com.example.shared
+  packages: ""
