@@ -23,10 +23,14 @@ public final class GraphIndex {
     private final Map<String, List<Edge>> incoming = new ConcurrentHashMap<>();
 
     public synchronized void putNode(Node n) {
-        // 더 풍부한 노드 정보를 가진 기록을 우선
-        nodes.merge(n.id(), n, (existing, incoming) ->
-                (existing.stereotypes() == null || existing.stereotypes().isEmpty())
-                        ? incoming : existing);
+        // 더 풍부한 노드(stereotype/메서드/필드 보유)를 우선
+        nodes.merge(n.id(), n, (existing, incoming) -> richer(existing) ? existing : incoming);
+    }
+
+    private static boolean richer(Node n) {
+        return (n.stereotypes() != null && !n.stereotypes().isEmpty())
+                || (n.methods() != null && !n.methods().isEmpty())
+                || (n.fields() != null && !n.fields().isEmpty());
     }
 
     public synchronized void addEdge(String source, String target, Relation rel) {
@@ -58,6 +62,6 @@ public final class GraphIndex {
         int idx = fqn.lastIndexOf('.');
         String name = idx < 0 ? fqn : fqn.substring(idx + 1);
         String pkg = idx < 0 ? "" : fqn.substring(0, idx);
-        return new Node(fqn, name, pkg, "external", List.of());
+        return new Node(fqn, name, pkg, "external", List.of(), List.of(), List.of());
     }
 }

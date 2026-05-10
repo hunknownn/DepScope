@@ -33,12 +33,16 @@ function nodeColor(n: GraphNode, seed: string): string {
 
 interface Props {
   data: GraphData;
-  onNodeDoubleClick: (n: GraphNode) => void;
+  onNodeSelect: (n: GraphNode) => void;
+  onNodeReseed: (n: GraphNode) => void;
+  highlightedIds?: Set<string>;
   width: number;
   height: number;
 }
 
-export default function GraphView({ data, onNodeDoubleClick, width, height }: Props) {
+const DIM_COLOR = "#1f2937";
+
+export default function GraphView({ data, onNodeSelect, onNodeReseed, highlightedIds, width, height }: Props) {
   const fgRef = useRef<ForceGraphMethods | undefined>(undefined);
 
   // ForceGraph 는 source/target 을 객체 참조로 바꾸기 때문에 매 렌더 새 객체를 넘긴다.
@@ -51,6 +55,16 @@ export default function GraphView({ data, onNodeDoubleClick, width, height }: Pr
     const t = setTimeout(() => fgRef.current?.zoomToFit(600, 80), 200);
     return () => clearTimeout(t);
   }, [data.seed, data.depth]);
+
+  const hlActive = !!highlightedIds && highlightedIds.size > 0;
+  // 하이라이트 변경 시 ForceGraph 가 색상/크기 캐시를 새로 계산하도록 트리거
+  useEffect(() => {
+    fgRef.current?.refresh?.();
+  }, [highlightedIds]);
+
+  function linkEndpointId(end: string | { id?: string }): string {
+    return typeof end === "string" ? end : (end?.id ?? "");
+  }
 
   return (
     <ForceGraph3D
@@ -66,15 +80,32 @@ export default function GraphView({ data, onNodeDoubleClick, width, height }: Pr
           (n as GraphNode).stereotypes?.length ? " · @" + (n as GraphNode).stereotypes.join(", @") : ""
         }</span>
       </div>`}
-      nodeColor={(n: any) => nodeColor(n as GraphNode, data.seed)}
-      nodeVal={(n: any) => ((n as GraphNode).id === data.seed ? 16 : 4)}
-      linkColor={(l: any) => RELATION_COLOR[(l as GraphLink).relation] ?? "#666"}
-      linkOpacity={0.6}
+      nodeColor={(n: any) => {
+        const node = n as GraphNode;
+        const base = nodeColor(node, data.seed);
+        if (!hlActive) return base;
+        return highlightedIds!.has(node.id) ? base : DIM_COLOR;
+      }}
+      nodeVal={(n: any) => {
+        const node = n as GraphNode;
+        const baseSize = node.id === data.seed ? 16 : 4;
+        if (!hlActive) return baseSize;
+        return highlightedIds!.has(node.id) ? baseSize * 2.5 : baseSize;
+      }}
+      linkColor={(l: any) => {
+        const link = l as GraphLink;
+        const base = RELATION_COLOR[link.relation] ?? "#666";
+        if (!hlActive) return base;
+        const s = linkEndpointId((l as any).source);
+        const t = linkEndpointId((l as any).target);
+        return (highlightedIds!.has(s) || highlightedIds!.has(t)) ? base : DIM_COLOR;
+      }}
+      linkOpacity={hlActive ? 0.25 : 0.6}
       linkDirectionalArrowLength={3}
       linkDirectionalArrowRelPos={1}
-      onNodeClick={(n: any) => fgRef.current?.centerAt?.()}
-      onNodeRightClick={(n: any) => onNodeDoubleClick(n as GraphNode)}
-      // 더블클릭 대용으로 right-click 사용 (3d-force-graph 는 기본 dblclick = 줌)
+      onNodeClick={(n: any) => onNodeSelect(n as GraphNode)}
+      onNodeRightClick={(n: any) => onNodeReseed(n as GraphNode)}
+      // 좌클릭: 디테일 패널 표시 / 우클릭: 그 노드를 새 seed 로
     />
   );
 }

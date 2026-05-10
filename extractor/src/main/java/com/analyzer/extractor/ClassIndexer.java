@@ -1,5 +1,7 @@
 package com.analyzer.extractor;
 
+import com.analyzer.extractor.model.FieldInfo;
+import com.analyzer.extractor.model.MethodInfo;
 import com.analyzer.extractor.model.Node;
 import com.analyzer.extractor.model.Relation;
 import org.objectweb.asm.AnnotationVisitor;
@@ -62,6 +64,8 @@ public final class ClassIndexer {
         private String thisFqn;
         private String kind;
         private final List<String> stereotypes = new ArrayList<>();
+        private final List<MethodInfo> methods = new ArrayList<>();
+        private final List<FieldInfo> fields = new ArrayList<>();
 
         Visitor() { super(ASM_API); }
 
@@ -106,6 +110,14 @@ public final class ClassIndexer {
             for (String t : referencedTypes(Type.getType(descriptor))) {
                 if (keep(t)) index.addEdge(thisFqn, t, Relation.HAS_FIELD);
             }
+            // 컴파일러가 만든 합성 필드(this$0 등)는 표시 목록에서 제외
+            if ((access & Opcodes.ACC_SYNTHETIC) == 0) {
+                fields.add(new FieldInfo(
+                        name,
+                        Type.getType(descriptor).getClassName(),
+                        modifiers(access)
+                ));
+            }
             return null;
         }
 
@@ -122,7 +134,10 @@ public final class ClassIndexer {
             for (String t : referencedTypes(m.getReturnType())) {
                 if (keep(t)) index.addEdge(thisFqn, t, Relation.RETURNS);
             }
-            return new MethodBodyVisitor();
+            // <clinit> / 합성/브릿지 메서드는 사람이 보기엔 노이즈라 MethodInfo 등록 제외 (엣지는 계속 수집)
+            boolean noise = "<clinit>".equals(name)
+                    || (access & (Opcodes.ACC_SYNTHETIC | Opcodes.ACC_BRIDGE)) != 0;
+            return new MethodBodyVisitor(noise ? null : name, descriptor, access);
         }
 
         @Override
@@ -133,13 +148,28 @@ public final class ClassIndexer {
                     simple(thisFqn),
                     pkg(thisFqn),
                     kind,
-                    new ArrayList<>(new LinkedHashSet<>(stereotypes))
+                    new ArrayList<>(new LinkedHashSet<>(stereotypes)),
+                    List.copyOf(methods),
+                    List.copyOf(fields)
             ));
         }
 
-        /** 메서드 본문: INVOKE* / NEW 명령에서 호출/생성된 타입 수집 */
+        /**
+         * 메서드 본문: INVOKE* / NEW 명령에서 호출/생성된 타입 수집.
+         * methodName 이 null 이면 noise 메서드라 MethodInfo 는 등록하지 않고 엣지만 추가.
+         */
         private final class MethodBodyVisitor extends MethodVisitor {
-            MethodBodyVisitor() { super(ASM_API); }
+            private final String methodName;       // null 이면 MethodInfo 미등록
+            private final String methodDescriptor;
+            private final int methodAccess;
+            private final Set<String> usedTypes = new LinkedHashSet<>();
+
+            MethodBodyVisitor(String methodName, String methodDescriptor, int methodAccess) {
+                super(ASM_API);
+                this.methodName = methodName;
+                this.methodDescriptor = methodDescriptor;
+                this.methodAccess = methodAccess;
+            }
 
             @Override
             public void visitMethodInsn(int opcode, String owner, String name,
@@ -147,6 +177,7 @@ public final class ClassIndexer {
                 String t = fqn(owner);
                 if (t != null && keep(t)) {
                     index.addEdge(thisFqn, t, Relation.CALLS);
+                    usedTypes.add(t);
                 }
             }
 
@@ -156,8 +187,24 @@ public final class ClassIndexer {
                     String t = fqn(type);
                     if (t != null && keep(t)) {
                         index.addEdge(thisFqn, t, Relation.NEW);
+                        usedTypes.add(t);
                     }
                 }
+            }
+
+            @Override
+            public void visitEnd() {
+                if (methodName == null) return; // noise 메서드: MethodInfo 등록 생략
+                Type m = Type.getMethodType(methodDescriptor);
+                List<String> paramTypes = new ArrayList<>(m.getArgumentTypes().length);
+                for (Type p : m.getArgumentTypes()) paramTypes.add(p.getClassName());
+                methods.add(new MethodInfo(
+                        methodName,
+                        m.getReturnType().getClassName(),
+                        paramTypes,
+                        modifiers(methodAccess),
+                        List.copyOf(usedTypes)
+                ));
             }
         }
     }
@@ -175,5 +222,17 @@ public final class ClassIndexer {
             case Type.ARRAY -> collect(t.getElementType(), out);
             default -> { /* primitive / void: 무시 */ }
         }
+    }
+
+    /** ASM access 플래그 -> ["public", "static", ...] */
+    private static List<String> modifiers(int access) {
+        List<String> out = new ArrayList<>(4);
+        if ((access & Opcodes.ACC_PUBLIC) != 0) out.add("public");
+        if ((access & Opcodes.ACC_PROTECTED) != 0) out.add("protected");
+        if ((access & Opcodes.ACC_PRIVATE) != 0) out.add("private");
+        if ((access & Opcodes.ACC_STATIC) != 0) out.add("static");
+        if ((access & Opcodes.ACC_FINAL) != 0) out.add("final");
+        if ((access & Opcodes.ACC_ABSTRACT) != 0) out.add("abstract");
+        return out;
     }
 }

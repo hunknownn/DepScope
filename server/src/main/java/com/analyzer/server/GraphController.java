@@ -36,6 +36,33 @@ public class GraphController {
         return new BfsExpander(idx).expand(seed, depth, allowed);
     }
 
+    /**
+     * 단일 클래스 디테일 조회. 인덱스에 메서드/필드 정보가 없는 외부 클래스(JDK 등)는
+     * JVM 클래스로더 기반 리플렉션으로 보강해 반환.
+     */
+    @GetMapping("/api/class")
+    public Node classDetail(@RequestParam String id) {
+        GraphIndex idx = indexService.index();
+        Node n = idx.node(id);
+        boolean hasDetails = n != null
+                && ((n.methods() != null && !n.methods().isEmpty())
+                    || (n.fields() != null && !n.fields().isEmpty()));
+        if (hasDetails) return n;
+
+        Node enriched = ReflectionInspector.tryInspect(id);
+        if (enriched == null) {
+            return n; // 인덱스 placeholder 그대로 (methods/fields 비어있음)
+        }
+        // 인덱스 stereotype 정보가 있으면 보존
+        if (n != null && n.stereotypes() != null && !n.stereotypes().isEmpty()) {
+            return new Node(
+                    enriched.id(), enriched.name(), enriched.pkg(), enriched.kind(),
+                    n.stereotypes(), enriched.methods(), enriched.fields()
+            );
+        }
+        return enriched;
+    }
+
     @GetMapping("/api/search")
     public List<Node> search(@RequestParam String q,
                              @RequestParam(defaultValue = "20") int limit) {

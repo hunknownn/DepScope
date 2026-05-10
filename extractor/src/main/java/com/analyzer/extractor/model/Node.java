@@ -7,6 +7,8 @@ public record Node(
         String name,
         String pkg,
         String kind,
-        List<String> stereotypes
+        List<String> stereotypes,
+        List<MethodInfo> methods,
+        List<FieldInfo> fields
 ) {
 }

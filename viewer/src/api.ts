@@ -12,6 +12,12 @@ export async function fetchGraph(
   return res.json();
 }
 
+export async function fetchClassDetail(id: string): Promise<GraphNode> {
+  const res = await fetch(`/api/class?id=${encodeURIComponent(id)}`);
+  if (!res.ok) throw new Error(`class detail fetch failed: ${res.status}`);
+  return res.json();
+}
+
 export async function search(q: string): Promise<GraphNode[]> {
   if (!q.trim()) return [];
   const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`);

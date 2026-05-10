@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
-import { Config, fetchGraph, getConfig, reindex, search } from "./api";
+import { Config, fetchClassDetail, fetchGraph, getConfig, reindex, search } from "./api";
 import { GraphData, GraphNode, Relation } from "./types";
 import GraphView from "./GraphView";
+import NodeDetailPanel from "./NodeDetailPanel";
 
 const ALL_RELATIONS: Relation[] = [
   "EXTENDS", "IMPLEMENTS", "HAS_FIELD", "PARAM",
@@ -21,6 +22,9 @@ export default function App() {
   const [relations, setRelations] = useState<Relation[]>(ALL_RELATIONS);
   const [data, setData] = useState<GraphData | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
+  const [panelTab, setPanelTab] = useState<"controls" | "detail">("controls");
+  const [highlightedIds, setHighlightedIds] = useState<Set<string>>(new Set());
 
   // 인덱스 설정 패널 (서브 섹션)
   const [config, setConfig] = useState<Config | null>(null);
@@ -85,6 +89,18 @@ export default function App() {
       .catch(e => setError(String(e)));
   }, [seed, depth, relations]);
 
+  // 선택된 노드의 메서드/필드가 비어있으면 서버에서 lazy 보강 (외부/JDK 클래스용)
+  useEffect(() => {
+    if (!selectedNode) return;
+    const hasDetails = (selectedNode.methods?.length ?? 0) > 0
+                    || (selectedNode.fields?.length ?? 0) > 0;
+    if (hasDetails) return;
+    const id = selectedNode.id;
+    fetchClassDetail(id).then(n => {
+      setSelectedNode(prev => (prev && prev.id === id) ? n : prev);
+    }).catch(() => {});
+  }, [selectedNode?.id]);
+
   useEffect(() => {
     const t = setTimeout(() => {
       search(query).then(setSuggests).catch(() => {});
@@ -140,7 +156,17 @@ export default function App() {
               style={btn}>{showConfig ? "닫기" : "인덱스 설정"}</button>
           </div>
 
-          {showConfig && (
+          {/* 탭 바: 컨트롤 / 디테일 */}
+          <div style={{ display: "flex", gap: 6, marginTop: 12, borderBottom: "1px solid #1f2937" }}>
+            <PanelTab active={panelTab === "controls"} onClick={() => setPanelTab("controls")}>
+              컨트롤
+            </PanelTab>
+            <PanelTab active={panelTab === "detail"} onClick={() => setPanelTab("detail")}>
+              디테일{selectedNode ? ` · ${selectedNode.name}` : ""}
+            </PanelTab>
+          </div>
+
+          {panelTab === "controls" && showConfig && (
             <div style={{ marginTop: 12, padding: 12, background: "#0b1020aa", borderRadius: 6 }}>
               <Label>project-root (멀티모듈 자동 탐색)</Label>
               <input value={projectRoot} onChange={e => setProjectRoot(e.target.value)}
@@ -168,6 +194,8 @@ export default function App() {
             </div>
           )}
 
+          {panelTab === "controls" && (
+          <>
           <input
             value={query}
             onChange={e => setQuery(e.target.value)}
@@ -216,8 +244,26 @@ export default function App() {
           )}
           {error && <div style={{ color: "#ef4444", marginTop: 8 }}>{error}</div>}
           <div style={{ marginTop: 12, fontSize: 11, color: "#6b7280" }}>
-            노드 우클릭 → 그 노드를 새 seed 로
+            노드 좌클릭 → 디테일 탭 · 우클릭 → 그 노드를 새 seed 로
           </div>
+          </>
+          )}
+
+          {panelTab === "detail" && (
+            <div style={{ marginTop: 12 }}>
+              {selectedNode ? (
+                <NodeDetailPanel
+                  node={selectedNode}
+                  onReseed={(id) => { setSeed(id); setPanelTab("controls"); }}
+                  onHover={(ids) => setHighlightedIds(new Set(ids))}
+                />
+              ) : (
+                <div style={{ color: "#6b7280", padding: 12, textAlign: "center", fontSize: 11 }}>
+                  노드를 좌클릭하면 메서드/필드가 여기에 표시됩니다.
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 
@@ -247,7 +293,9 @@ export default function App() {
             data={data}
             width={graphWidth}
             height={graphHeight}
-            onNodeDoubleClick={n => setSeed(n.id)}
+            highlightedIds={highlightedIds}
+            onNodeSelect={n => { setSelectedNode(n); setPanelTab("detail"); }}
+            onNodeReseed={n => { setSeed(n.id); setSelectedNode(null); setPanelTab("controls"); }}
           />
         </div>
       )}
@@ -267,4 +315,21 @@ const btn: React.CSSProperties = {
 
 function Label({ children }: { children: React.ReactNode }) {
   return <div style={{ fontSize: 11, color: "#9aa5b1", marginTop: 8, marginBottom: 2 }}>{children}</div>;
+}
+
+function PanelTab({ active, onClick, children }: {
+  active: boolean; onClick: () => void; children: React.ReactNode;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        padding: "6px 12px", fontSize: 12, cursor: "pointer",
+        background: "transparent", color: active ? "#fff" : "#9aa5b1",
+        border: "none", borderBottom: active ? "2px solid #2563eb" : "2px solid transparent",
+        marginBottom: -1
+      }}>
+      {children}
+    </button>
+  );
 }
