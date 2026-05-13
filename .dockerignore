@@ -1,0 +1,15 @@
+.git
+.gitignore
+.gradle
+.idea
+.vscode
+**/build
+**/out
+**/bin
+**/node_modules
+**/dist
+**/*.iml
+**/.DS_Store
+**/*.log
+README.md
+LICENSE

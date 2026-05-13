@@ -1,0 +1,32 @@
+services:
+  server:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    image: dep-scope-server:latest
+    container_name: dep-scope-server
+    ports:
+      - "8080:8080"
+    environment:
+      # Spring relaxed-binding: analyzer.project-root → ANALYZER_PROJECTROOT
+      # 비워두면 빈 인덱스로 시작, 뷰어에서 호스트 경로 그대로 입력 후 reindex.
+      ANALYZER_PROJECTROOT: ${ANALYZER_PROJECTROOT:-}
+      ANALYZER_CLASSPATH: ${ANALYZER_CLASSPATH:-}
+      ANALYZER_PACKAGES: ${ANALYZER_PACKAGES:-}
+    volumes:
+      # 호스트의 분석 대상 디렉터리를 "동일 경로"로 마운트 → 컨테이너에서 호스트 경로 그대로 사용 가능.
+      # 기본은 $HOME (Docker Desktop 의 기본 공유 범위). 더 좁히고 싶으면 ANALYZE_DIR=/path 로 오버라이드.
+      - ${ANALYZE_DIR:-${HOME}}:${ANALYZE_DIR:-${HOME}}:ro
+    restart: unless-stopped
+
+  viewer:
+    build:
+      context: .
+      dockerfile: viewer/Dockerfile
+    image: dep-scope-viewer:latest
+    container_name: dep-scope-viewer
+    ports:
+      - "5173:80"
+    depends_on:
+      - server
+    restart: unless-stopped
