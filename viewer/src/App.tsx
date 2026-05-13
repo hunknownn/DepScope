@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Config, fetchClassDetail, fetchGraph, getConfig, reindex, search } from "./api";
 import { GraphData, GraphNode, Relation } from "./types";
-import GraphView from "./GraphView";
+import GraphView, { GraphHandle } from "./GraphView";
 import NodeDetailPanel from "./NodeDetailPanel";
 
 const ALL_RELATIONS: Relation[] = [
@@ -25,6 +25,9 @@ export default function App() {
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
   const [panelTab, setPanelTab] = useState<"controls" | "detail">("controls");
   const [highlightedIds, setHighlightedIds] = useState<Set<string>>(new Set());
+  const [devMode, setDevMode] = useState(false);
+  const [grabMode, setGrabMode] = useState(false);
+  const graphRef = useRef<GraphHandle>(null);
 
   // 인덱스 설정 패널 (서브 섹션)
   const [config, setConfig] = useState<Config | null>(null);
@@ -287,19 +290,64 @@ export default function App() {
       {data && (
         <div style={{
           position: "absolute", top: 0, left: graphLeft,
-          width: graphWidth, height: graphHeight
+          width: graphWidth, height: graphHeight,
+          cursor: grabMode ? "grab" : "auto"
         }}>
           <GraphView
+            ref={graphRef}
             data={data}
             width={graphWidth}
             height={graphHeight}
             highlightedIds={highlightedIds}
+            highlightBaseId={selectedNode?.id}
+            devMode={devMode}
+            grabMode={grabMode}
             onNodeSelect={n => { setSelectedNode(n); setPanelTab("detail"); }}
             onNodeReseed={n => { setSeed(n.id); setSelectedNode(null); setPanelTab("controls"); }}
           />
         </div>
       )}
+
+      {/* 하단 중앙 줌/맞춤 컨트롤 (Figma 스타일) */}
+      {data && (
+        <div style={{
+          position: "absolute", bottom: 16, left: "50%", transform: "translateX(-50%)", zIndex: 20,
+          display: "flex", gap: 4, padding: 4,
+          background: "#111827cc", borderRadius: 6, backdropFilter: "blur(6px)",
+          border: "1px solid #1f2937"
+        }}>
+          <ZoomBtn onClick={() => graphRef.current?.zoomOut()} title="줌 아웃">−</ZoomBtn>
+          <ZoomBtn onClick={() => graphRef.current?.zoomIn()} title="줌 인">+</ZoomBtn>
+          <ZoomBtn onClick={() => graphRef.current?.fit()} title="전체 보기">⤢</ZoomBtn>
+          <ZoomBtn onClick={() => setGrabMode(v => !v)}
+                   title={grabMode ? "grab 끄기 (좌클릭 = 회전)" : "grab 켜기 (좌클릭 = 이동)"}
+                   active={grabMode}>✋</ZoomBtn>
+          <div style={{ width: 1, background: "#1f2937", margin: "4px 2px" }} />
+          <ZoomBtn onClick={() => setDevMode(v => !v)}
+                   title={devMode ? "dev 모드 끄기" : "dev 모드: 노드 이름 / in·out 카운트 표시"}
+                   active={devMode}>{"</>"}</ZoomBtn>
+        </div>
+      )}
     </div>
+  );
+}
+
+function ZoomBtn({ children, onClick, title, active }: {
+  children: React.ReactNode; onClick: () => void; title: string; active?: boolean;
+}) {
+  const baseBg = active ? "#2563eb" : "transparent";
+  const hoverBg = active ? "#1d4ed8" : "#1f2937";
+  return (
+    <button onClick={onClick} title={title}
+      style={{
+        width: 32, height: 32, fontSize: 14, lineHeight: 1,
+        background: baseBg, color: "#fff",
+        border: "none", borderRadius: 4, cursor: "pointer",
+        fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace"
+      }}
+      onMouseEnter={e => (e.currentTarget.style.background = hoverBg)}
+      onMouseLeave={e => (e.currentTarget.style.background = baseBg)}
+    >{children}</button>
   );
 }
 
