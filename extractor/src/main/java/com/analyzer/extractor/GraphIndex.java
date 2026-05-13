@@ -62,6 +62,6 @@ public final class GraphIndex {
         int idx = fqn.lastIndexOf('.');
         String name = idx < 0 ? fqn : fqn.substring(idx + 1);
         String pkg = idx < 0 ? "" : fqn.substring(0, idx);
-        return new Node(fqn, name, pkg, "external", List.of(), List.of(), List.of());
+        return new Node(fqn, name, pkg, "external", List.of(), List.of(), List.of(), null);
     }
 }

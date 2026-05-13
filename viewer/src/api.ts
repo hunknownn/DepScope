@@ -1,4 +1,4 @@
-import { GraphData, GraphNode, Relation } from "./types";
+import { CallFlowNode, GraphData, GraphNode, Relation, SourceSnippet } from "./types";
 
 export async function fetchGraph(
   seed: string,
@@ -15,6 +15,36 @@ export async function fetchGraph(
 export async function fetchClassDetail(id: string): Promise<GraphNode> {
   const res = await fetch(`/api/class?id=${encodeURIComponent(id)}`);
   if (!res.ok) throw new Error(`class detail fetch failed: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchSource(
+  classFqn: string,
+  line: number,
+  before = 1,
+  after = 1
+): Promise<SourceSnippet> {
+  const params = new URLSearchParams({
+    class: classFqn,
+    line: String(line),
+    before: String(before),
+    after: String(after)
+  });
+  const res = await fetch(`/api/source?${params}`);
+  if (!res.ok) throw new Error(`source fetch failed: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchCallFlow(
+  seed: string,
+  method: string,
+  descriptor?: string,
+  depth = 3
+): Promise<CallFlowNode> {
+  const params = new URLSearchParams({ seed, method, depth: String(depth) });
+  if (descriptor) params.set("descriptor", descriptor);
+  const res = await fetch(`/api/call-flow?${params}`);
+  if (!res.ok) throw new Error(`call-flow fetch failed: ${res.status}`);
   return res.json();
 }
 

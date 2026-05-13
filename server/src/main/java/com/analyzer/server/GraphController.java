@@ -1,7 +1,9 @@
 package com.analyzer.server;
 
 import com.analyzer.extractor.BfsExpander;
+import com.analyzer.extractor.CallFlowExpander;
 import com.analyzer.extractor.GraphIndex;
+import com.analyzer.extractor.model.CallFlowNode;
 import com.analyzer.extractor.model.GraphData;
 import com.analyzer.extractor.model.Node;
 import com.analyzer.extractor.model.Relation;
@@ -16,15 +18,18 @@ import java.io.IOException;
 import java.util.Comparator;
 import java.util.EnumSet;
 import java.util.List;
+import org.springframework.http.ResponseEntity;
 
 @RestController
 @CrossOrigin(origins = "*")
 public class GraphController {
 
     private final IndexService indexService;
+    private final SourceResolver sourceResolver;
 
-    public GraphController(IndexService indexService) {
+    public GraphController(IndexService indexService, SourceResolver sourceResolver) {
         this.indexService = indexService;
+        this.sourceResolver = sourceResolver;
     }
 
     @GetMapping("/api/graph")
@@ -57,7 +62,7 @@ public class GraphController {
         if (n != null && n.stereotypes() != null && !n.stereotypes().isEmpty()) {
             return new Node(
                     enriched.id(), enriched.name(), enriched.pkg(), enriched.kind(),
-                    n.stereotypes(), enriched.methods(), enriched.fields()
+                    n.stereotypes(), enriched.methods(), enriched.fields(), enriched.sourceFile()
             );
         }
         return enriched;
@@ -86,12 +91,42 @@ public class GraphController {
         } else {
             indexService.reindex(req.classpath(), req.packages(), req.projectRoot());
         }
+        sourceResolver.invalidate();
         return new ReindexResponse(
                 indexService.index().allNodes().size(),
                 indexService.currentProjectRoot(),
                 indexService.currentClasspath(),
                 indexService.currentPackages()
         );
+    }
+
+    /**
+     * 메서드 단위 호출 흐름 트리. 시드 메서드를 루트로, 본문 안 호출 순서대로 자식을 펼친다.
+     *
+     * @param seed       클래스 FQN
+     * @param method     메서드 이름
+     * @param descriptor (옵션) JVM descriptor — 오버로드 식별. 생략 시 첫 번째 매치
+     * @param depth      펼침 깊이 (기본 3)
+     */
+    @GetMapping("/api/call-flow")
+    public CallFlowNode callFlow(@RequestParam String seed,
+                                 @RequestParam String method,
+                                 @RequestParam(required = false) String descriptor,
+                                 @RequestParam(defaultValue = "3") int depth) {
+        GraphIndex idx = indexService.index();
+        return new CallFlowExpander(idx).expand(seed, method, descriptor, depth);
+    }
+
+    /**
+     * 소스 코드 한 조각 — call-flow v2 행에 표시할 라인 컨텍스트.
+     * line 이 0 이하면 빈 결과 (메타데이터 부족).
+     */
+    @GetMapping("/api/source")
+    public SourceResolver.Snippet source(@RequestParam("class") String classFqn,
+                                         @RequestParam int line,
+                                         @RequestParam(defaultValue = "1") int before,
+                                         @RequestParam(defaultValue = "1") int after) throws IOException {
+        return sourceResolver.read(classFqn, line, before, after);
     }
 
     /** 현재 적용된 설정 조회 (뷰어가 시작 시 표시용) */

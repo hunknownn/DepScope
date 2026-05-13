@@ -1,5 +1,6 @@
 package com.analyzer.extractor;
 
+import com.analyzer.extractor.model.CallSite;
 import com.analyzer.extractor.model.FieldInfo;
 import com.analyzer.extractor.model.MethodInfo;
 import com.analyzer.extractor.model.Node;
@@ -63,11 +64,17 @@ public final class ClassIndexer {
 
         private String thisFqn;
         private String kind;
+        private String sourceFile; // 예: "ClassIndexer.java"
         private final List<String> stereotypes = new ArrayList<>();
         private final List<MethodInfo> methods = new ArrayList<>();
         private final List<FieldInfo> fields = new ArrayList<>();
 
         Visitor() { super(ASM_API); }
+
+        @Override
+        public void visitSource(String source, String debug) {
+            this.sourceFile = source; // 예: "ClassIndexer.java"
+        }
 
         @Override
         public void visit(int version, int access, String name, String signature,
@@ -150,7 +157,8 @@ public final class ClassIndexer {
                     kind,
                     new ArrayList<>(new LinkedHashSet<>(stereotypes)),
                     List.copyOf(methods),
-                    List.copyOf(fields)
+                    List.copyOf(fields),
+                    sourceFile
             ));
         }
 
@@ -163,6 +171,9 @@ public final class ClassIndexer {
             private final String methodDescriptor;
             private final int methodAccess;
             private final Set<String> usedTypes = new LinkedHashSet<>();
+            private final List<CallSite> calls = new ArrayList<>();
+            private int currentLine = -1;
+            private int startLine = -1; // 메서드 첫 라인
 
             MethodBodyVisitor(String methodName, String methodDescriptor, int methodAccess) {
                 super(ASM_API);
@@ -172,12 +183,22 @@ public final class ClassIndexer {
             }
 
             @Override
+            public void visitLineNumber(int line, org.objectweb.asm.Label start) {
+                this.currentLine = line;
+                if (this.startLine < 0 || line < this.startLine) this.startLine = line;
+            }
+
+            @Override
             public void visitMethodInsn(int opcode, String owner, String name,
                                         String descriptor, boolean isInterface) {
                 String t = fqn(owner);
                 if (t != null && keep(t)) {
                     index.addEdge(thisFqn, t, Relation.CALLS);
                     usedTypes.add(t);
+                }
+                // CallSite 는 외부 클래스 (keep=false) 도 기록 — 호출 흐름 시각화는 외부 호출도 보여줘야 함
+                if (t != null && methodName != null) {
+                    calls.add(new CallSite(calls.size(), t, name, descriptor, invokeKind(opcode), currentLine));
                 }
             }
 
@@ -200,10 +221,13 @@ public final class ClassIndexer {
                 for (Type p : m.getArgumentTypes()) paramTypes.add(p.getClassName());
                 methods.add(new MethodInfo(
                         methodName,
+                        methodDescriptor,
                         m.getReturnType().getClassName(),
                         paramTypes,
                         modifiers(methodAccess),
-                        List.copyOf(usedTypes)
+                        List.copyOf(usedTypes),
+                        List.copyOf(calls),
+                        startLine
                 ));
             }
         }
@@ -222,6 +246,18 @@ public final class ClassIndexer {
             case Type.ARRAY -> collect(t.getElementType(), out);
             default -> { /* primitive / void: 무시 */ }
         }
+    }
+
+    /** INVOKE* opcode -> 사람이 읽기 좋은 호출 종류 */
+    private static String invokeKind(int opcode) {
+        return switch (opcode) {
+            case Opcodes.INVOKEVIRTUAL -> "virtual";
+            case Opcodes.INVOKESTATIC -> "static";
+            case Opcodes.INVOKEINTERFACE -> "interface";
+            case Opcodes.INVOKESPECIAL -> "special"; // 생성자 / private / super
+            case Opcodes.INVOKEDYNAMIC -> "dynamic"; // 람다, indy 등
+            default -> "unknown";
+        };
     }
 
     /** ASM access 플래그 -> ["public", "static", ...] */

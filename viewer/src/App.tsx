@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { Config, fetchClassDetail, fetchGraph, getConfig, reindex, search } from "./api";
-import { GraphData, GraphNode, Relation } from "./types";
+import { CallSite, GraphData, GraphNode, MethodInfo, Relation } from "./types";
 import GraphView, { GraphHandle } from "./GraphView";
 import NodeDetailPanel from "./NodeDetailPanel";
+import CallFlowView from "./CallFlowView";
 
 const ALL_RELATIONS: Relation[] = [
   "EXTENDS", "IMPLEMENTS", "HAS_FIELD", "PARAM",
@@ -27,6 +28,9 @@ export default function App() {
   const [highlightedIds, setHighlightedIds] = useState<Set<string>>(new Set());
   const [devMode, setDevMode] = useState(false);
   const [grabMode, setGrabMode] = useState(false);
+  const [callFlowTarget, setCallFlowTarget] = useState<{ seed: string; method: MethodInfo } | null>(null);
+  // 그래프 위에 표시할 호출 시퀀스 (A+B: 간선 순번 + 파티클)
+  const [graphCallFlow, setGraphCallFlow] = useState<CallSite[] | null>(null);
   const graphRef = useRef<GraphHandle>(null);
 
   // 인덱스 설정 패널 (서브 섹션)
@@ -259,6 +263,8 @@ export default function App() {
                   node={selectedNode}
                   onReseed={(id) => { setSeed(id); setPanelTab("controls"); }}
                   onHover={(ids) => setHighlightedIds(new Set(ids))}
+                  onShowCallFlow={(m) => setCallFlowTarget({ seed: selectedNode.id, method: m })}
+                  onSetCallFlow={(calls) => setGraphCallFlow(calls)}
                 />
               ) : (
                 <div style={{ color: "#6b7280", padding: 12, textAlign: "center", fontSize: 11 }}>
@@ -302,6 +308,8 @@ export default function App() {
             highlightBaseId={selectedNode?.id}
             devMode={devMode}
             grabMode={grabMode}
+            callFlowSource={graphCallFlow ? selectedNode?.id : undefined}
+            callFlowCalls={graphCallFlow ?? undefined}
             onNodeSelect={n => { setSelectedNode(n); setPanelTab("detail"); }}
             onNodeReseed={n => { setSeed(n.id); setSelectedNode(null); setPanelTab("controls"); }}
           />
@@ -327,6 +335,16 @@ export default function App() {
                    title={devMode ? "dev 모드 끄기" : "dev 모드: 노드 이름 / in·out 카운트 표시"}
                    active={devMode}>{"</>"}</ZoomBtn>
         </div>
+      )}
+
+      {/* 호출 흐름 오버레이 */}
+      {callFlowTarget && (
+        <CallFlowView
+          seed={callFlowTarget.seed}
+          method={callFlowTarget.method.name}
+          descriptor={callFlowTarget.method.descriptor}
+          onClose={() => setCallFlowTarget(null)}
+        />
       )}
     </div>
   );

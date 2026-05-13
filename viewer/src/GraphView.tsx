@@ -1,7 +1,7 @@
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef } from "react";
 import ForceGraph3D, { ForceGraphMethods } from "react-force-graph-3d";
 import * as THREE from "three";
-import { GraphData, GraphLink, GraphNode, Relation } from "./types";
+import { CallSite, GraphData, GraphLink, GraphNode, Relation } from "./types";
 
 export interface GraphHandle {
   zoomIn(): void;
@@ -49,6 +49,57 @@ interface Props {
   height: number;
   devMode?: boolean;
   grabMode?: boolean;
+  /** 호출 흐름 시작 클래스 (보통 selectedNode.id) */
+  callFlowSource?: string;
+  /** 시각화할 호출 시퀀스 — 간선에 순번/파티클로 표시 */
+  callFlowCalls?: CallSite[];
+}
+
+// 간선 위에 띄울 순번 sprite (호출 흐름 시각화용)
+function makeOrderBadgeSprite(orders: number[]): THREE.Sprite {
+  // 1-based 표시. 5개 넘으면 축약
+  const visible = orders.slice(0, 5).map(o => String(o + 1));
+  const text = orders.length > 5 ? visible.join(",") + ",…" : visible.join(",");
+  const canvas = document.createElement("canvas");
+  const ctx = canvas.getContext("2d")!;
+  const fontSize = 24;
+  const font = `bold ${fontSize}px -apple-system, BlinkMacSystemFont, sans-serif`;
+  ctx.font = font;
+  const w = ctx.measureText(text).width;
+  const padX = 10, padY = 6;
+  canvas.width = Math.ceil(w + padX * 2);
+  canvas.height = Math.ceil(fontSize + padY * 2);
+  // 배경 (호출 흐름 강조용 컬러)
+  ctx.fillStyle = "rgba(251, 191, 36, 0.95)";
+  roundRect(ctx, 0, 0, canvas.width, canvas.height, 6);
+  ctx.fill();
+  // 텍스트
+  ctx.font = font;
+  ctx.fillStyle = "#111827";
+  ctx.textBaseline = "middle";
+  ctx.textAlign = "center";
+  ctx.fillText(text, canvas.width / 2, canvas.height / 2);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.minFilter = THREE.LinearFilter;
+  const material = new THREE.SpriteMaterial({
+    map: texture, transparent: true, depthWrite: false, depthTest: false
+  });
+  const sprite = new THREE.Sprite(material);
+  sprite.renderOrder = 1000;
+  const scale = 0.18;
+  sprite.scale.set(canvas.width * scale, canvas.height * scale, 1);
+  return sprite;
+}
+
+function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
 }
 
 // 노드 위에 띄울 텍스트 라벨 sprite 생성
@@ -89,7 +140,8 @@ function makeLabelSprite(lines: string[]): THREE.Sprite {
 const DIM_COLOR = "#1f2937";
 
 const GraphView = forwardRef<GraphHandle, Props>(function GraphView(
-  { data, onNodeSelect, onNodeReseed, highlightedIds, highlightBaseId, width, height, devMode, grabMode },
+  { data, onNodeSelect, onNodeReseed, highlightedIds, highlightBaseId, width, height, devMode, grabMode,
+    callFlowSource, callFlowCalls },
   ref
 ) {
   const fgRef = useRef<ForceGraphMethods | undefined>(undefined);
@@ -154,6 +206,29 @@ const GraphView = forwardRef<GraphHandle, Props>(function GraphView(
     return typeof end === "string" ? end : (end?.id ?? "");
   }
 
+  // 호출 흐름: edge key (source->target) -> 등장 순번들
+  const callFlowEdges = useMemo(() => {
+    const m = new Map<string, number[]>();
+    if (!callFlowSource || !callFlowCalls || callFlowCalls.length === 0) return m;
+    for (const cs of callFlowCalls) {
+      const key = `${callFlowSource}->${cs.ownerFqn}`;
+      if (!m.has(key)) m.set(key, []);
+      m.get(key)!.push(cs.order);
+    }
+    return m;
+  }, [callFlowSource, callFlowCalls]);
+
+  // 호출 흐름 변경 시 ForceGraph 가 linkThreeObject / 파티클을 다시 적용하도록 리프레시
+  useEffect(() => {
+    fgRef.current?.refresh?.();
+  }, [callFlowEdges]);
+
+  function linkKey(l: any): string {
+    const s = linkEndpointId(l.source);
+    const t = linkEndpointId(l.target);
+    return `${s}->${t}`;
+  }
+
   // 노드별 in / out edge 카운트 (devMode 라벨용)
   const edgeCounts = useMemo(() => {
     const m = new Map<string, { in: number; out: number }>();
@@ -209,6 +284,29 @@ const GraphView = forwardRef<GraphHandle, Props>(function GraphView(
       linkOpacity={hlActive ? 0.25 : 0.6}
       linkDirectionalArrowLength={3}
       linkDirectionalArrowRelPos={1}
+
+      // 호출 흐름 — 해당 간선에 파티클 애니메이션 (B)
+      linkDirectionalParticles={(l: any) => callFlowEdges.has(linkKey(l)) ? 4 : 0}
+      linkDirectionalParticleSpeed={0.006}
+      linkDirectionalParticleWidth={2.5}
+      linkDirectionalParticleColor={() => "#fbbf24"}
+
+      // 호출 흐름 — 간선 중간에 순번 sprite (A)
+      linkThreeObjectExtend={true}
+      linkThreeObject={(l: any) => {
+        const orders = callFlowEdges.get(linkKey(l));
+        if (!orders || orders.length === 0) return null as any;
+        return makeOrderBadgeSprite(orders);
+      }}
+      linkPositionUpdate={(sprite: any, { start, end }: any) => {
+        if (!sprite) return false;
+        sprite.position.set(
+          (start.x + end.x) / 2,
+          (start.y + end.y) / 2,
+          (start.z + end.z) / 2
+        );
+        return true;
+      }}
       onNodeClick={(n: any) => onNodeSelect(n as GraphNode)}
       onNodeRightClick={(n: any) => onNodeReseed(n as GraphNode)}
       // 좌클릭: 디테일 패널 표시 / 우클릭: 그 노드를 새 seed 로

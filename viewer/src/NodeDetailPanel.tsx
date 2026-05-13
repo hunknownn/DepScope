@@ -1,10 +1,13 @@
 import { useEffect, useState } from "react";
-import { GraphNode, MethodInfo } from "./types";
+import { CallSite, GraphNode, MethodInfo } from "./types";
 
 interface Props {
   node: GraphNode;
   onReseed: (id: string) => void;
   onHover: (ids: string[]) => void;
+  onShowCallFlow: (method: MethodInfo) => void;
+  /** 메서드 호버/핀 시 호출 시퀀스를 그래프에 반영 (간선 순번/파티클). null 이면 해제. */
+  onSetCallFlow?: (calls: CallSite[] | null) => void;
 }
 
 type Tab = "methods" | "fields";
@@ -24,33 +27,36 @@ function toClassFqns(types: string[]): string[] {
   return out;
 }
 
-export default function NodeDetailPanel({ node, onReseed, onHover }: Props) {
+export default function NodeDetailPanel({ node, onReseed, onHover, onShowCallFlow, onSetCallFlow }: Props) {
   const [tab, setTab] = useState<Tab>("methods");
-  // 클릭으로 고정된 행: key + 강조할 ids
-  const [pinned, setPinned] = useState<{ key: string; ids: string[] } | null>(null);
+  // 클릭으로 고정된 행: key + 강조할 ids + (메서드면) call sequence
+  const [pinned, setPinned] = useState<{ key: string; ids: string[]; calls?: CallSite[] } | null>(null);
 
   // 다른 노드를 선택하면 핀 해제
   useEffect(() => {
     setPinned(null);
     onHover([]);
+    onSetCallFlow?.(null);
   }, [node.id]);
 
   // 핀 상태 변경 시 그래프에 반영
   useEffect(() => {
     onHover(pinned?.ids ?? []);
+    onSetCallFlow?.(pinned?.calls ?? null);
   }, [pinned]);
 
   const methods = node.methods ?? [];
   const fields = node.fields ?? [];
   const hasDetails = methods.length > 0 || fields.length > 0;
 
-  function togglePin(key: string, ids: string[]) {
-    setPinned(prev => prev?.key === key ? null : { key, ids });
+  function togglePin(key: string, ids: string[], calls?: CallSite[]) {
+    setPinned(prev => prev?.key === key ? null : { key, ids, calls });
   }
 
-  /** 호버 종료 시: 핀이 있으면 핀의 ids 로 복귀, 없으면 해제 */
+  /** 호버 종료 시: 핀이 있으면 핀 상태로 복귀, 없으면 해제 */
   function handleLeave() {
     onHover(pinned?.ids ?? []);
+    onSetCallFlow?.(pinned?.calls ?? null);
   }
 
   function rowStyle(key: string): React.CSSProperties {
@@ -99,13 +105,23 @@ export default function NodeDetailPanel({ node, onReseed, onHover }: Props) {
                 {methods.map((m, i) => {
                   const key = `m:${i}`;
                   const ids = toClassFqns([m.returnType, ...m.paramTypes, ...(m.usedTypes ?? [])]);
+                  const hasCalls = (m.calls?.length ?? 0) > 0;
                   return (
                     <li key={key} style={rowStyle(key)}
                         title="클릭: 강조 고정 / 다시 클릭: 해제"
-                        onClick={() => togglePin(key, ids)}
-                        onMouseEnter={() => onHover(ids)}
+                        onClick={() => togglePin(key, ids, m.calls ?? [])}
+                        onMouseEnter={() => { onHover(ids); onSetCallFlow?.(m.calls ?? []); }}
                         onMouseLeave={handleLeave}>
-                      {renderMethod(m)}
+                      <div style={{ display: "flex", alignItems: "flex-start", gap: 6 }}>
+                        <div style={{ flex: 1, minWidth: 0 }}>{renderMethod(m)}</div>
+                        {hasCalls && (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); onShowCallFlow(m); }}
+                            title="이 메서드의 호출 흐름 보기"
+                            style={callFlowBtnStyle}
+                          >호출 흐름</button>
+                        )}
+                      </div>
                     </li>
                   );
                 })}
@@ -122,7 +138,7 @@ export default function NodeDetailPanel({ node, onReseed, onHover }: Props) {
                     <li key={key} style={rowStyle(key)}
                         title="클릭: 강조 고정 / 다시 클릭: 해제"
                         onClick={() => togglePin(key, ids)}
-                        onMouseEnter={() => onHover(ids)}
+                        onMouseEnter={() => { onHover(ids); onSetCallFlow?.(null); }}
                         onMouseLeave={handleLeave}>
                       <span style={modStyle}>{f.modifiers.join(" ")}</span>
                       {" "}
@@ -212,4 +228,9 @@ const emptyStyle: React.CSSProperties = {
 const reseedBtn: React.CSSProperties = {
   marginTop: 12, padding: "6px 12px", fontSize: 12,
   background: "#374151", color: "#fff", border: "none", borderRadius: 4, cursor: "pointer"
+};
+
+const callFlowBtnStyle: React.CSSProperties = {
+  padding: "2px 8px", fontSize: 10, background: "#1f2937", color: "#7bc7ff",
+  border: "1px solid #374151", borderRadius: 3, cursor: "pointer", flexShrink: 0
 };

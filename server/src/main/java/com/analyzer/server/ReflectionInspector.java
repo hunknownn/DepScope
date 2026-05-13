@@ -52,7 +52,14 @@ public final class ReflectionInspector {
                 List<String> params = new ArrayList<>();
                 for (Class<?> p : ctor.getParameterTypes()) params.add(p.getTypeName());
                 methods.add(new MethodInfo(
-                        "<init>", "void", params, modifiers(ctor.getModifiers()), List.of()
+                        "<init>",
+                        descriptorOf(ctor.getParameterTypes(), void.class),
+                        "void",
+                        params,
+                        modifiers(ctor.getModifiers()),
+                        List.of(),
+                        List.of(),
+                        -1
                 ));
             }
         } catch (Throwable ignore) {}
@@ -63,10 +70,13 @@ public final class ReflectionInspector {
                 for (Class<?> p : m.getParameterTypes()) params.add(p.getTypeName());
                 methods.add(new MethodInfo(
                         m.getName(),
+                        descriptorOf(m.getParameterTypes(), m.getReturnType()),
                         m.getReturnType().getTypeName(),
                         params,
                         modifiers(m.getModifiers()),
-                        List.of() // 본문 분석은 리플렉션으로 불가
+                        List.of(), // 본문 분석은 리플렉션으로 불가
+                        List.of(),
+                        -1
                 ));
             }
         } catch (Throwable ignore) {}
@@ -84,7 +94,29 @@ public final class ReflectionInspector {
         } catch (Throwable ignore) {}
 
         return new Node(fqn, simple, pkg, kind, List.of(),
-                List.copyOf(methods), List.copyOf(fields));
+                List.copyOf(methods), List.copyOf(fields), null);
+    }
+
+    /** Class[] + return Class -> JVM descriptor (예: "(I[Ljava/lang/String;)Lfoo/Bar;") */
+    private static String descriptorOf(Class<?>[] params, Class<?> ret) {
+        StringBuilder sb = new StringBuilder("(");
+        for (Class<?> p : params) sb.append(typeDescriptor(p));
+        sb.append(")").append(typeDescriptor(ret));
+        return sb.toString();
+    }
+
+    private static String typeDescriptor(Class<?> c) {
+        if (c == void.class) return "V";
+        if (c == boolean.class) return "Z";
+        if (c == byte.class) return "B";
+        if (c == char.class) return "C";
+        if (c == short.class) return "S";
+        if (c == int.class) return "I";
+        if (c == long.class) return "J";
+        if (c == float.class) return "F";
+        if (c == double.class) return "D";
+        if (c.isArray()) return "[" + typeDescriptor(c.getComponentType());
+        return "L" + c.getName().replace('.', '/') + ";";
     }
 
     private static List<String> modifiers(int mod) {

@@ -4,10 +4,44 @@ export type Relation =
 
 export interface MethodInfo {
   name: string;
+  descriptor: string;
   returnType: string;
   paramTypes: string[];
   modifiers: string[];
   usedTypes: string[];
+  calls?: CallSite[];
+  startLine?: number;
+}
+
+export interface CallSite {
+  order: number;
+  ownerFqn: string;
+  name: string;
+  descriptor: string;
+  kind: string;
+  line: number;
+}
+
+export interface CallFlowNode {
+  classFqn: string;
+  className: string;
+  method: string;
+  descriptor: string;
+  kind: string;
+  order: number;
+  line: number;
+  recursive: boolean;
+  external: boolean;
+  truncated: boolean;
+  calls: CallFlowNode[];
+}
+
+export interface SourceSnippet {
+  path: string | null;
+  fromLine: number;
+  toLine: number;
+  callLine: number;
+  lines: string[];
 }
 
 export interface FieldInfo {
