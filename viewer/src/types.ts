@@ -1,6 +1,8 @@
 export type Relation =
   | "EXTENDS" | "IMPLEMENTS" | "HAS_FIELD" | "PARAM"
-  | "RETURNS" | "CALLS" | "NEW" | "ANNOTATED_BY";
+  | "RETURNS" | "CALLS" | "NEW" | "ANNOTATED_BY"
+  | "ONE_TO_MANY" | "MANY_TO_ONE" | "ONE_TO_ONE" | "MANY_TO_MANY"
+  | "USES_ENTITY";
 
 export interface MethodInfo {
   name: string;
@@ -50,6 +52,23 @@ export interface FieldInfo {
   modifiers: string[];
 }
 
+export interface ColumnInfo {
+  fieldName: string;
+  columnName?: string | null;
+  javaType: string;
+  primaryKey: boolean;
+  nullable: boolean;
+  unique: boolean;
+  length?: number | null;
+  generatedValue?: string | null;
+}
+
+export interface EntityInfo {
+  kind: "entity" | "mappedSuperclass" | "embeddable";
+  tableName?: string | null;
+  columns: ColumnInfo[];
+}
+
 export interface GraphNode {
   id: string;
   name: string;
@@ -58,6 +77,7 @@ export interface GraphNode {
   stereotypes: string[];
   methods?: MethodInfo[];
   fields?: FieldInfo[];
+  entity?: EntityInfo | null;
 }
 
 export interface GraphLink {
@@ -65,6 +85,7 @@ export interface GraphLink {
   target: string;
   relation: Relation;
   weight: number;
+  label?: string | null;
 }
 
 export interface GraphData {

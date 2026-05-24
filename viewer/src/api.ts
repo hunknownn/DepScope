@@ -55,6 +55,31 @@ export async function search(q: string): Promise<GraphNode[]> {
   return res.json();
 }
 
+export async function fetchErd(opts: {
+  scope: "all" | "seed";
+  seed?: string;
+  depth?: number;
+  level: 1 | 2 | 3;
+}): Promise<GraphData> {
+  const params = new URLSearchParams({ scope: opts.scope, level: String(opts.level) });
+  if (opts.seed) params.set("seed", opts.seed);
+  if (opts.depth != null) params.set("depth", String(opts.depth));
+  const res = await fetch(`/api/erd?${params}`);
+  if (!res.ok) throw new Error(`erd fetch failed: ${res.status}`);
+  return res.json();
+}
+
+export async function searchErd(q: string, includeRepositories = true): Promise<GraphNode[]> {
+  if (!q.trim()) return [];
+  const params = new URLSearchParams({
+    q,
+    includeRepositories: String(includeRepositories)
+  });
+  const res = await fetch(`/api/erd/search?${params}`);
+  if (!res.ok) throw new Error(`erd search failed: ${res.status}`);
+  return res.json();
+}
+
 export interface Config {
   nodes: number;
   projectRoot?: string;

@@ -17,7 +17,12 @@ const RELATION_COLOR: Record<Relation, string> = {
   RETURNS: "#9aa5b1",
   CALLS: "#a78bfa",
   NEW: "#34d399",
-  ANNOTATED_BY: "#f472b6"
+  ANNOTATED_BY: "#f472b6",
+  ONE_TO_MANY: "#10b981",
+  MANY_TO_ONE: "#14b8a6",
+  ONE_TO_ONE: "#06b6d4",
+  MANY_TO_MANY: "#6366f1",
+  USES_ENTITY: "#eab308"
 };
 
 const KIND_COLOR: Record<string, string> = {

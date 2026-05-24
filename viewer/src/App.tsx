@@ -4,10 +4,15 @@ import { CallSite, GraphData, GraphNode, MethodInfo, Relation } from "./types";
 import GraphView, { GraphHandle } from "./GraphView";
 import NodeDetailPanel from "./NodeDetailPanel";
 import CallFlowView from "./CallFlowView";
+import TopNav from "./TopNav";
+
+const NAV_H = 56;
 
 const ALL_RELATIONS: Relation[] = [
   "EXTENDS", "IMPLEMENTS", "HAS_FIELD", "PARAM",
-  "RETURNS", "CALLS", "NEW", "ANNOTATED_BY"
+  "RETURNS", "CALLS", "NEW", "ANNOTATED_BY",
+  "ONE_TO_MANY", "MANY_TO_ONE", "ONE_TO_ONE", "MANY_TO_MANY",
+  "USES_ENTITY"
 ];
 
 const PANEL_W_DEFAULT = 380;
@@ -136,10 +141,13 @@ export default function App() {
   // 그래프 영역 좌표 계산: 패널이 보이면 그만큼 오른쪽으로 밀기
   const graphLeft = panelVisible ? panelWidth + GUTTER * 2 : 0;
   const graphWidth = Math.max(100, size.w - graphLeft);
-  const graphHeight = size.h;
+  const graphHeight = Math.max(100, size.h - NAV_H);
 
   return (
     <div style={{ position: "relative", width: "100%", height: "100%", overflow: "hidden" }}>
+      <TopNav active="main" />
+      {/* 그래프와 패널을 담는 컨테이너 — 헤더 아래로 밀어둔다 */}
+      <div style={{ position: "absolute", top: NAV_H, left: 0, right: 0, bottom: 0 }}>
       {/* 패널 토글 (항상 표시) */}
       <button onClick={() => setPanelVisible(v => !v)}
         style={{
@@ -155,7 +163,7 @@ export default function App() {
         <div style={{
           position: "absolute", top: 56, left: 16, zIndex: 10, width: panelWidth,
           background: "#111827cc", padding: 16, borderRadius: 8, backdropFilter: "blur(6px)",
-          maxHeight: "calc(100vh - 72px)", overflowY: "auto", boxSizing: "border-box"
+          maxHeight: `calc(100vh - ${NAV_H + 72}px)`, overflowY: "auto", boxSizing: "border-box"
         }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <h3 style={{ margin: 0 }}>DepScope</h3>
@@ -346,6 +354,7 @@ export default function App() {
           onClose={() => setCallFlowTarget(null)}
         />
       )}
+      </div>
     </div>
   );
 }
