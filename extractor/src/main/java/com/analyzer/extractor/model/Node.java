@@ -14,6 +14,12 @@ public record Node(
         List<String> stereotypes,
         List<MethodInfo> methods,
         List<FieldInfo> fields,
-        String sourceFile
+        String sourceFile,
+        EntityInfo entity
 ) {
+    public Node(String id, String name, String pkg, String kind,
+                List<String> stereotypes, List<MethodInfo> methods,
+                List<FieldInfo> fields, String sourceFile) {
+        this(id, name, pkg, kind, stereotypes, methods, fields, sourceFile, null);
+    }
 }

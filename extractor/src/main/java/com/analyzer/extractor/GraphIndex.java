@@ -34,8 +34,12 @@ public final class GraphIndex {
     }
 
     public synchronized void addEdge(String source, String target, Relation rel) {
+        addEdge(source, target, rel, null);
+    }
+
+    public synchronized void addEdge(String source, String target, Relation rel, String label) {
         if (source.equals(target)) return; // self-edge 제거
-        Edge e = new Edge(source, target, rel);
+        Edge e = new Edge(source, target, rel, label);
         outgoing.computeIfAbsent(source, k -> new ArrayList<>()).add(e);
         incoming.computeIfAbsent(target, k -> new ArrayList<>()).add(e);
         nodes.putIfAbsent(target, placeholderNode(target));
