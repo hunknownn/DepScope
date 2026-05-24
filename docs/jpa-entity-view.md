@@ -269,7 +269,7 @@ MANY_TO_MANY
 - ERD Export (PNG / PlantUML / SQL DDL)
 - ERD 노드 컨텍스트 액션 (메인 그래프에서 "ERD로 보기")
 - 2D 엣지 Crow's foot 끝모양 마커 (현재는 방향 화살표 + 텍스트 라벨)
-- elkjs 등 orthogonal 라우팅 도입 (dagre 의 직교 분기로는 부족한 경우)
+- ~~elkjs 등 orthogonal 라우팅 도입~~ → **완료**: 2D 뷰는 elkjs `layered` + `ORTHOGONAL` 라우팅 사용
 
 ---
 

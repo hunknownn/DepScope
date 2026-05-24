@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import dagre from "dagre";
+import ELK, { ElkExtendedEdge, ElkNode } from "elkjs/lib/elk.bundled.js";
 import { GraphData, GraphLink, GraphNode, Relation } from "./types";
 
 interface Props {
@@ -44,11 +44,16 @@ interface Layout {
   height: number;
 }
 
+const EMPTY_LAYOUT: Layout = { nodes: new Map(), edges: new Map(), width: 0, height: 0 };
+
+// elkjs 인스턴스는 worker 를 띄울 수 있어 전역에서 한 번만 생성
+const elk = new ELK();
+
 /**
- * dagre 기반 2D ERD 렌더러.
+ * elkjs 기반 2D ERD 렌더러.
  *
- * 노드는 테이블 카드 형태(header + 컬럼 리스트), 엣지는 dagre 가 계산한 꺾인 경로.
- * rankdir 토글(LR / TB)로 가로/세로 방향 전환.
+ * `layered` 알고리즘 + `ORTHOGONAL` 엣지 라우팅으로 직교(꺾인) 경로를 그린다.
+ * 방향은 LR/TB 토글. 엣지 교차/겹침은 elkjs 가 dagre 보다 잘 처리한다.
  */
 export default function ErdView2D({ data, width, height, level, onNodeReseed }: Props) {
   const [zoom, setZoom] = useState(1);
@@ -56,11 +61,25 @@ export default function ErdView2D({ data, width, height, level, onNodeReseed }: 
   const [dragging, setDragging] = useState<{ x: number; y: number } | null>(null);
   const [hoverEdge, setHoverEdge] = useState<string | null>(null);
   const [rankdir, setRankdir] = useState<RankDir>("LR");
-  const didFit = useRef(false);
+  const [layout, setLayout] = useState<Layout>(EMPTY_LAYOUT);
+  const layoutSeq = useRef(0);
 
-  const layout = useMemo(() => computeDagreLayout(data, level, rankdir), [data, level, rankdir]);
+  const linkKey = useMemo(
+    () => (l: GraphLink, i: number) => `${l.source}-${l.target}-${l.relation}-${i}`,
+    []
+  );
 
-  // 그래프가 새로 들어오거나 rankdir 이 바뀌면 자동으로 화면에 맞춤
+  // elkjs 는 비동기 layout 이라 useEffect 로 계산
+  useEffect(() => {
+    const seq = ++layoutSeq.current;
+    computeElkLayout(data, level, rankdir).then((result) => {
+      // 도중에 다른 layout 요청이 들어왔다면 무시
+      if (seq !== layoutSeq.current) return;
+      setLayout(result);
+    });
+  }, [data, level, rankdir]);
+
+  // 레이아웃이 바뀌면 자동으로 화면에 맞춤
   useEffect(() => {
     if (layout.width === 0 || layout.height === 0) return;
     const margin = 40;
@@ -74,10 +93,7 @@ export default function ErdView2D({ data, width, height, level, onNodeReseed }: 
       x: (width - layout.width * scale) / 2,
       y: (height - layout.height * scale) / 2
     });
-    didFit.current = true;
   }, [layout, width, height]);
-
-  const linkKey = (l: GraphLink, i: number) => `${l.source}-${l.target}-${l.relation}-${i}`;
 
   return (
     <div
@@ -115,7 +131,7 @@ export default function ErdView2D({ data, width, height, level, onNodeReseed }: 
             const color = RELATION_COLOR[l.relation] ?? "#94a3b8";
             const isHover = hoverEdge === key;
             const d = pointsToPath(path.points);
-            const labelPoint = path.points[Math.floor(path.points.length / 2)];
+            const labelPoint = midPoint(path.points);
             return (
               <g
                 key={key}
@@ -195,7 +211,6 @@ export default function ErdView2D({ data, width, height, level, onNodeReseed }: 
         <button
           style={zoomBtnStyle}
           onClick={() => {
-            // fit 재실행: layout 의존성 트리거를 위해 zoom 만 살짝 바꾸지 않고 직접 계산
             const margin = 40;
             const scale = Math.min(
               (width - margin * 2) / Math.max(1, layout.width),
@@ -218,13 +233,37 @@ export default function ErdView2D({ data, width, height, level, onNodeReseed }: 
 
 function pointsToPath(points: { x: number; y: number }[]): string {
   if (points.length === 0) return "";
-  // dagre 가 부드러운 곡선 경로를 주지는 않으므로 polyline 으로 그린다.
-  // 첫 점 M, 이후 L. 두 점 사이는 직선.
   const head = `M ${points[0].x.toFixed(2)} ${points[0].y.toFixed(2)}`;
   const rest = points.slice(1)
     .map((p) => `L ${p.x.toFixed(2)} ${p.y.toFixed(2)}`)
     .join(" ");
   return `${head} ${rest}`;
+}
+
+// 폴리라인 전체 길이의 중간 지점 → 라벨 위치
+function midPoint(points: { x: number; y: number }[]): { x: number; y: number } {
+  if (points.length === 1) return points[0];
+  let total = 0;
+  const seg: number[] = [];
+  for (let i = 1; i < points.length; i++) {
+    const dx = points[i].x - points[i - 1].x;
+    const dy = points[i].y - points[i - 1].y;
+    const len = Math.hypot(dx, dy);
+    seg.push(len);
+    total += len;
+  }
+  let half = total / 2;
+  for (let i = 0; i < seg.length; i++) {
+    if (half <= seg[i]) {
+      const t = seg[i] === 0 ? 0 : half / seg[i];
+      return {
+        x: points[i].x + (points[i + 1].x - points[i].x) * t,
+        y: points[i].y + (points[i + 1].y - points[i].y) * t
+      };
+    }
+    half -= seg[i];
+  }
+  return points[points.length - 1];
 }
 
 function cardHeight(n: GraphNode, level: 1 | 2 | 3): number {
@@ -233,63 +272,92 @@ function cardHeight(n: GraphNode, level: 1 | 2 | 3): number {
 }
 
 /**
- * dagre 로 계층 레이아웃 계산.
+ * elkjs layered 알고리즘 + ORTHOGONAL 엣지 라우팅으로 레이아웃 계산.
  *
- * 노드 크기는 가변 (컬럼 수에 따라 높이 변동).
- * 엣지는 (source, target, relation, index) 를 키로 multi-edge 지원.
- * dagre 가 반환하는 노드 좌표 (x, y) 는 노드의 중심이라 좌상단 (x - w/2, y - h/2) 로 변환.
+ * - 노드 좌표는 좌상단 기준 (dagre 와 달리 변환 불필요).
+ * - 엣지 경로는 `section.startPoint + bendPoints + endPoint` 로 폴리라인 구성.
+ * - multi-edge 는 elkjs 가 자체 id 로 구분하므로 link 인덱스를 id 에 섞어 충돌 회피.
  */
-function computeDagreLayout(data: GraphData, level: 1 | 2 | 3, rankdir: RankDir): Layout {
-  const g = new dagre.graphlib.Graph({ multigraph: true });
-  g.setGraph({
-    rankdir,
-    nodesep: 40,
-    ranksep: 80,
-    marginx: 30,
-    marginy: 30
-  });
-  g.setDefaultEdgeLabel(() => ({}));
+async function computeElkLayout(data: GraphData, level: 1 | 2 | 3, rankdir: RankDir): Promise<Layout> {
+  if (data.nodes.length === 0) return EMPTY_LAYOUT;
 
-  for (const n of data.nodes) {
-    g.setNode(n.id, { width: CARD_W, height: cardHeight(n, level) });
+  const direction = rankdir === "LR" ? "RIGHT" : "DOWN";
+
+  const children: ElkNode[] = data.nodes.map((n) => ({
+    id: n.id,
+    width: CARD_W,
+    height: cardHeight(n, level)
+  }));
+
+  const nodeIds = new Set(data.nodes.map((n) => n.id));
+  const edges: ElkExtendedEdge[] = [];
+  data.links.forEach((l, i) => {
+    if (!nodeIds.has(l.source) || !nodeIds.has(l.target)) return;
+    edges.push({
+      id: `e-${i}-${l.relation}`,
+      sources: [l.source],
+      targets: [l.target]
+    });
+  });
+
+  const graph: ElkNode = {
+    id: "root",
+    layoutOptions: {
+      "elk.algorithm": "layered",
+      "elk.direction": direction,
+      "elk.edgeRouting": "ORTHOGONAL",
+      "elk.layered.nodePlacement.strategy": "BRANDES_KOEPF",
+      "elk.layered.spacing.nodeNodeBetweenLayers": "80",
+      "elk.spacing.nodeNode": "40",
+      "elk.spacing.edgeNode": "20",
+      "elk.spacing.edgeEdge": "15",
+      "elk.layered.crossingMinimization.strategy": "LAYER_SWEEP",
+      "elk.layered.considerModelOrder.strategy": "NODES_AND_EDGES",
+      "elk.padding": "[top=30,left=30,bottom=30,right=30]"
+    },
+    children,
+    edges
+  };
+
+  let result: ElkNode;
+  try {
+    result = await elk.layout(graph);
+  } catch (err) {
+    console.error("elkjs layout failed", err);
+    return EMPTY_LAYOUT;
   }
 
-  data.links.forEach((l, i) => {
-    if (!g.hasNode(l.source) || !g.hasNode(l.target)) return;
-    const edgeName = `${l.relation}-${i}`;
-    g.setEdge(l.source, l.target, {}, edgeName);
-  });
-
-  dagre.layout(g);
-
   const nodeBoxes = new Map<string, CardBox>();
-  for (const id of g.nodes()) {
-    const n = g.node(id);
-    if (!n) continue;
-    nodeBoxes.set(id, {
-      x: n.x - n.width / 2,
-      y: n.y - n.height / 2,
-      w: n.width,
-      h: n.height
+  for (const c of result.children ?? []) {
+    nodeBoxes.set(c.id, {
+      x: c.x ?? 0,
+      y: c.y ?? 0,
+      w: c.width ?? CARD_W,
+      h: c.height ?? CARD_HEADER_H
     });
   }
 
   const edgePaths = new Map<string, EdgePath>();
+  let edgeIdx = 0;
   data.links.forEach((l, i) => {
-    if (!g.hasNode(l.source) || !g.hasNode(l.target)) return;
-    const edgeName = `${l.relation}-${i}`;
-    const e = g.edge({ v: l.source, w: l.target, name: edgeName });
-    if (!e || !e.points) return;
+    if (!nodeIds.has(l.source) || !nodeIds.has(l.target)) return;
+    const elkEdge = (result.edges ?? [])[edgeIdx++];
+    if (!elkEdge || !elkEdge.sections || elkEdge.sections.length === 0) return;
+    const section = elkEdge.sections[0];
+    const points: { x: number; y: number }[] = [
+      { x: section.startPoint.x, y: section.startPoint.y },
+      ...(section.bendPoints ?? []).map((p) => ({ x: p.x, y: p.y })),
+      { x: section.endPoint.x, y: section.endPoint.y }
+    ];
     const key = `${l.source}-${l.target}-${l.relation}-${i}`;
-    edgePaths.set(key, { points: e.points });
+    edgePaths.set(key, { points });
   });
 
-  const graphLabel = g.graph() as { width?: number; height?: number };
   return {
     nodes: nodeBoxes,
     edges: edgePaths,
-    width: graphLabel.width ?? 0,
-    height: graphLabel.height ?? 0
+    width: result.width ?? 0,
+    height: result.height ?? 0
   };
 }
 

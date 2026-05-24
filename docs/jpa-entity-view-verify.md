@@ -228,7 +228,7 @@ Kotlin 어노테이션 타깃 처리는 후속 과제로 분리한다.
 - 다단계 Repository 상속(`MyBaseRepo<T> extends JpaRepository<T, ID>` 경유)은 미지원. 직접 상속만 잡는다.
 - `@Inheritance` 전략(JOINED 등)은 표시하지 않는다.
 - 외부 jar 내 `@MappedSuperclass` 는 인식하지 않는다 (예: `BaseEntity` 가 공용 라이브러리 jar에 있는 경우).
-- 2D 뷰의 자동 레이아웃은 dagre 계층 배치 — LR/TB 방향 토글 가능. 사이클이 많은 그래프에선 여전히 엣지 교차가 발생할 수 있다.
+- 2D 뷰의 자동 레이아웃은 elkjs `layered` 알고리즘 + `ORTHOGONAL` 엣지 라우팅 — LR/TB 방향 토글 가능. 큰 그래프에서는 계산이 비동기로 수백 ms 걸릴 수 있다.
 - 2D 엣지의 Crow's foot 끝모양 마커는 미구현 (방향 화살표 + 텍스트 라벨로만 카디널리티 표시).
 
 ## 7. 검증 실패 시 체크리스트
