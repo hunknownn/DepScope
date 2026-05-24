@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import dagre from "dagre";
 import { GraphData, GraphLink, GraphNode, Relation } from "./types";
 
 interface Props {
@@ -30,22 +31,51 @@ const RELATION_COLOR: Partial<Record<Relation, string>> = {
 const CARD_W = 220;
 const CARD_HEADER_H = 36;
 const ROW_H = 18;
-const PADDING = 60;
+
+type RankDir = "LR" | "TB";
+
+interface CardBox { x: number; y: number; w: number; h: number; }
+interface EdgePath { points: { x: number; y: number }[]; }
+
+interface Layout {
+  nodes: Map<string, CardBox>;
+  edges: Map<string, EdgePath>;
+  width: number;
+  height: number;
+}
 
 /**
- * 가벼운 2D ERD 렌더러.
+ * dagre 기반 2D ERD 렌더러.
  *
- * 자동 레이아웃은 단순 grid (열 우선) — dagre/elkjs 없이 동작.
- * 노드는 테이블 카드 형태 (header: 클래스명 + 테이블명, body: 컬럼 리스트).
- * 엣지는 직선 + 카디널리티 라벨. 엣지 끝의 Crow's foot 마커는 후속 작업.
+ * 노드는 테이블 카드 형태(header + 컬럼 리스트), 엣지는 dagre 가 계산한 꺾인 경로.
+ * rankdir 토글(LR / TB)로 가로/세로 방향 전환.
  */
 export default function ErdView2D({ data, width, height, level, onNodeReseed }: Props) {
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [dragging, setDragging] = useState<{ x: number; y: number } | null>(null);
-  const [hoverEdge, setHoverEdge] = useState<number | null>(null);
+  const [hoverEdge, setHoverEdge] = useState<string | null>(null);
+  const [rankdir, setRankdir] = useState<RankDir>("LR");
+  const didFit = useRef(false);
 
-  const layout = useMemo(() => computeGridLayout(data.nodes, level), [data.nodes, level]);
+  const layout = useMemo(() => computeDagreLayout(data, level, rankdir), [data, level, rankdir]);
+
+  // 그래프가 새로 들어오거나 rankdir 이 바뀌면 자동으로 화면에 맞춤
+  useEffect(() => {
+    if (layout.width === 0 || layout.height === 0) return;
+    const margin = 40;
+    const scale = Math.min(
+      (width - margin * 2) / layout.width,
+      (height - margin * 2) / layout.height,
+      1
+    );
+    setZoom(scale);
+    setPan({
+      x: (width - layout.width * scale) / 2,
+      y: (height - layout.height * scale) / 2
+    });
+    didFit.current = true;
+  }, [layout, width, height]);
 
   const linkKey = (l: GraphLink, i: number) => `${l.source}-${l.target}-${l.relation}-${i}`;
 
@@ -57,39 +87,72 @@ export default function ErdView2D({ data, width, height, level, onNodeReseed }: 
       onMouseUp={() => setDragging(null)}
       onMouseLeave={() => setDragging(null)}
       onWheel={(e) => {
-        const next = Math.max(0.3, Math.min(2.5, zoom * (e.deltaY < 0 ? 1.1 : 1 / 1.1)));
+        const next = Math.max(0.2, Math.min(3, zoom * (e.deltaY < 0 ? 1.1 : 1 / 1.1)));
         setZoom(next);
       }}
     >
       <svg width={width} height={height}>
+        <defs>
+          {Object.entries(RELATION_COLOR).map(([rel, color]) => (
+            <marker
+              key={rel}
+              id={`arrow-${rel}`}
+              viewBox="0 0 10 10"
+              refX={9} refY={5}
+              markerWidth={6} markerHeight={6}
+              orient="auto-start-reverse"
+            >
+              <path d="M 0 0 L 10 5 L 0 10 z" fill={color} />
+            </marker>
+          ))}
+        </defs>
         <g transform={`translate(${pan.x},${pan.y}) scale(${zoom})`}>
           {/* 엣지 */}
           {data.links.map((l, i) => {
-            const s = layout.get(l.source);
-            const t = layout.get(l.target);
-            if (!s || !t) return null;
-            const sc = cardCenter(s);
-            const tc = cardCenter(t);
-            const mid = { x: (sc.x + tc.x) / 2, y: (sc.y + tc.y) / 2 };
+            const key = linkKey(l, i);
+            const path = layout.edges.get(key);
+            if (!path || path.points.length < 2) return null;
             const color = RELATION_COLOR[l.relation] ?? "#94a3b8";
-            const isHover = hoverEdge === i;
+            const isHover = hoverEdge === key;
+            const d = pointsToPath(path.points);
+            const labelPoint = path.points[Math.floor(path.points.length / 2)];
             return (
               <g
-                key={linkKey(l, i)}
-                onMouseEnter={() => setHoverEdge(i)}
-                onMouseLeave={() => setHoverEdge((h) => (h === i ? null : h))}
+                key={key}
+                onMouseEnter={() => setHoverEdge(key)}
+                onMouseLeave={() => setHoverEdge((h) => (h === key ? null : h))}
               >
-                <line
-                  x1={sc.x} y1={sc.y} x2={tc.x} y2={tc.y}
-                  stroke={color} strokeWidth={isHover ? 3 : 1.5} opacity={0.7}
+                <path
+                  d={d}
+                  fill="none"
+                  stroke={color}
+                  strokeWidth={isHover ? 2.5 : 1.5}
+                  opacity={0.85}
+                  markerEnd={`url(#arrow-${l.relation})`}
                 />
-                <text x={mid.x} y={mid.y - 4} fill={color} fontSize={11} textAnchor="middle"
-                      stroke="#0f172a" strokeWidth={3} paintOrder="stroke">
+                <text
+                  x={labelPoint.x}
+                  y={labelPoint.y - 6}
+                  fill={color}
+                  fontSize={11}
+                  textAnchor="middle"
+                  stroke="#0f172a"
+                  strokeWidth={3}
+                  paintOrder="stroke"
+                >
                   {RELATION_LABEL[l.relation] ?? l.relation}
                 </text>
                 {l.label && isHover && (
-                  <text x={mid.x} y={mid.y + 10} fill="#cbd5e1" fontSize={10} textAnchor="middle"
-                        stroke="#0f172a" strokeWidth={3} paintOrder="stroke">
+                  <text
+                    x={labelPoint.x}
+                    y={labelPoint.y + 10}
+                    fill="#cbd5e1"
+                    fontSize={10}
+                    textAnchor="middle"
+                    stroke="#0f172a"
+                    strokeWidth={3}
+                    paintOrder="stroke"
+                  >
                     {l.label}
                   </text>
                 )}
@@ -99,14 +162,14 @@ export default function ErdView2D({ data, width, height, level, onNodeReseed }: 
 
           {/* 노드 */}
           {data.nodes.map((n) => {
-            const pos = layout.get(n.id);
-            if (!pos) return null;
+            const box = layout.nodes.get(n.id);
+            if (!box) return null;
             return (
               <EntityCard
                 key={n.id}
                 node={n}
-                x={pos.x}
-                y={pos.y}
+                x={box.x}
+                y={box.y}
                 level={level}
                 onReseed={() => onNodeReseed(n)}
               />
@@ -115,49 +178,119 @@ export default function ErdView2D({ data, width, height, level, onNodeReseed }: 
         </g>
       </svg>
 
-      {/* 줌 컨트롤 */}
+      {/* 컨트롤 */}
       <div style={{
         position: "absolute", bottom: 16, right: 16,
         display: "flex", gap: 4, background: "#1e293b", padding: 4, borderRadius: 4
       }}>
-        <button style={zoomBtnStyle} onClick={() => setZoom((z) => Math.min(2.5, z * 1.2))}>+</button>
-        <button style={zoomBtnStyle} onClick={() => setZoom((z) => Math.max(0.3, z / 1.2))}>−</button>
-        <button style={zoomBtnStyle} onClick={() => { setZoom(1); setPan({ x: 0, y: 0 }); }}>fit</button>
+        <button
+          style={zoomBtnStyle}
+          onClick={() => setRankdir((d) => (d === "LR" ? "TB" : "LR"))}
+          title="방향 전환 (LR ↔ TB)"
+        >
+          {rankdir}
+        </button>
+        <button style={zoomBtnStyle} onClick={() => setZoom((z) => Math.min(3, z * 1.2))}>+</button>
+        <button style={zoomBtnStyle} onClick={() => setZoom((z) => Math.max(0.2, z / 1.2))}>−</button>
+        <button
+          style={zoomBtnStyle}
+          onClick={() => {
+            // fit 재실행: layout 의존성 트리거를 위해 zoom 만 살짝 바꾸지 않고 직접 계산
+            const margin = 40;
+            const scale = Math.min(
+              (width - margin * 2) / Math.max(1, layout.width),
+              (height - margin * 2) / Math.max(1, layout.height),
+              1
+            );
+            setZoom(scale);
+            setPan({
+              x: (width - layout.width * scale) / 2,
+              y: (height - layout.height * scale) / 2
+            });
+          }}
+        >
+          fit
+        </button>
       </div>
     </div>
   );
 }
 
-interface CardPos { x: number; y: number; h: number; }
-
-function cardCenter(p: CardPos) { return { x: p.x + CARD_W / 2, y: p.y + p.h / 2 }; }
-
-/** sqrt(N) 기준 grid 배치. PADDING 만큼 간격. */
-function computeGridLayout(nodes: GraphNode[], level: 1 | 2 | 3): Map<string, CardPos> {
-  const out = new Map<string, CardPos>();
-  if (nodes.length === 0) return out;
-  const cols = Math.ceil(Math.sqrt(nodes.length));
-  let row = 0, col = 0;
-  let rowMaxH = 0;
-  let curY = PADDING;
-  for (const n of nodes) {
-    const h = cardHeight(n, level);
-    out.set(n.id, { x: PADDING + col * (CARD_W + PADDING), y: curY, h });
-    if (h > rowMaxH) rowMaxH = h;
-    col++;
-    if (col >= cols) {
-      col = 0;
-      row++;
-      curY += rowMaxH + PADDING;
-      rowMaxH = 0;
-    }
-  }
-  return out;
+function pointsToPath(points: { x: number; y: number }[]): string {
+  if (points.length === 0) return "";
+  // dagre 가 부드러운 곡선 경로를 주지는 않으므로 polyline 으로 그린다.
+  // 첫 점 M, 이후 L. 두 점 사이는 직선.
+  const head = `M ${points[0].x.toFixed(2)} ${points[0].y.toFixed(2)}`;
+  const rest = points.slice(1)
+    .map((p) => `L ${p.x.toFixed(2)} ${p.y.toFixed(2)}`)
+    .join(" ");
+  return `${head} ${rest}`;
 }
 
 function cardHeight(n: GraphNode, level: 1 | 2 | 3): number {
   if (level < 2 || !n.entity || n.entity.columns.length === 0) return CARD_HEADER_H + 8;
   return CARD_HEADER_H + n.entity.columns.length * ROW_H + 8;
+}
+
+/**
+ * dagre 로 계층 레이아웃 계산.
+ *
+ * 노드 크기는 가변 (컬럼 수에 따라 높이 변동).
+ * 엣지는 (source, target, relation, index) 를 키로 multi-edge 지원.
+ * dagre 가 반환하는 노드 좌표 (x, y) 는 노드의 중심이라 좌상단 (x - w/2, y - h/2) 로 변환.
+ */
+function computeDagreLayout(data: GraphData, level: 1 | 2 | 3, rankdir: RankDir): Layout {
+  const g = new dagre.graphlib.Graph({ multigraph: true });
+  g.setGraph({
+    rankdir,
+    nodesep: 40,
+    ranksep: 80,
+    marginx: 30,
+    marginy: 30
+  });
+  g.setDefaultEdgeLabel(() => ({}));
+
+  for (const n of data.nodes) {
+    g.setNode(n.id, { width: CARD_W, height: cardHeight(n, level) });
+  }
+
+  data.links.forEach((l, i) => {
+    if (!g.hasNode(l.source) || !g.hasNode(l.target)) return;
+    const edgeName = `${l.relation}-${i}`;
+    g.setEdge(l.source, l.target, {}, edgeName);
+  });
+
+  dagre.layout(g);
+
+  const nodeBoxes = new Map<string, CardBox>();
+  for (const id of g.nodes()) {
+    const n = g.node(id);
+    if (!n) continue;
+    nodeBoxes.set(id, {
+      x: n.x - n.width / 2,
+      y: n.y - n.height / 2,
+      w: n.width,
+      h: n.height
+    });
+  }
+
+  const edgePaths = new Map<string, EdgePath>();
+  data.links.forEach((l, i) => {
+    if (!g.hasNode(l.source) || !g.hasNode(l.target)) return;
+    const edgeName = `${l.relation}-${i}`;
+    const e = g.edge({ v: l.source, w: l.target, name: edgeName });
+    if (!e || !e.points) return;
+    const key = `${l.source}-${l.target}-${l.relation}-${i}`;
+    edgePaths.set(key, { points: e.points });
+  });
+
+  const graphLabel = g.graph() as { width?: number; height?: number };
+  return {
+    nodes: nodeBoxes,
+    edges: edgePaths,
+    width: graphLabel.width ?? 0,
+    height: graphLabel.height ?? 0
+  };
 }
 
 function EntityCard({ node, x, y, level, onReseed }: {
@@ -199,7 +332,7 @@ function shortType(t: string): string {
 }
 
 const zoomBtnStyle: React.CSSProperties = {
-  width: 28, height: 28, fontSize: 14,
+  minWidth: 28, height: 28, fontSize: 12, padding: "0 6px",
   background: "transparent", color: "#cbd5e1",
   border: "1px solid #475569", borderRadius: 4, cursor: "pointer"
 };
